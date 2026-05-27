@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Port Scanner</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #0d1117; color: #e6edf3; font-family: 'Segoe UI', sans-serif; min-height: 100vh; display: flex; flex-direction: column; align-items: center; padding: 40px 20px; }
+    h1 { font-size: 28px; font-weight: 600; margin-bottom: 8px; color: #a78bfa; }
+    .subtitle { color: #8b949e; font-size: 14px; margin-bottom: 32px; }
+    .card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 28px; width: 100%; max-width: 820px; }
+    .row { display: flex; gap: 12px; margin-bottom: 16px; }
+    input { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; color: #e6edf3; padding: 10px 14px; font-size: 14px; flex: 1; outline: none; }
+    input:focus { border-color: #a78bfa; }
+    input.small { flex: 0 0 140px; }
+    button { background: #a78bfa; color: #0d1117; border: none; border-radius: 8px; padding: 10px 24px; font-size: 14px; font-weight: 600; cursor: pointer; }
+    button:hover { background: #9061f9; }
+    button:disabled { background: #30363d; color: #8b949e; cursor: not-allowed; }
+    .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 20px; }
+    .stat { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 14px; text-align: center; }
+    .stat-val { font-size: 28px; font-weight: 600; color: #a78bfa; }
+    .stat-label { font-size: 12px; color: #8b949e; margin-top: 4px; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    thead th { text-align: left; padding: 8px 12px; color: #8b949e; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #30363d; }
+    tbody tr { border-bottom: 1px solid #21262d; }
+    tbody tr:last-child { border-bottom: none; }
+    td { padding: 10px 12px; }
+    .badge-open { background: #1a3a2a; color: #3fb950; padding: 3px 8px; border-radius: 20px; font-size: 12px; font-weight: 500; }
+    .port { font-family: monospace; color: #a78bfa; }
+    .error { color: #f85149; font-size: 14px; margin-top: 12px; }
+    .hidden { display: none; }
+    #progress { height: 3px; background: #21262d; border-radius: 2px; margin-bottom: 20px; overflow: hidden; }
+    #progress-bar { height: 100%; width: 0%; background: #a78bfa; transition: width 0.3s; }
+  </style>
+</head>
+<body>
+  <h1>Port Scanner</h1>
+  <p class="subtitle">Scanne les ports ouverts d'une machine</p>
+
+  <div class="card">
+    <div class="row">
+      <input type="text" id="host" placeholder="IP ou domaine (ex: 127.0.0.1)" />
+      <input type="text" id="range" placeholder="1-3524" class="small" />
+      <button id="btn" onclick="startScan()">Scanner</button>
+      <button id="btn-export" onclick="exportCSV()" disabled style="background:#21262d;color:#8b949e;border:1px solid #30363d;margin-left:8px;padding:10px 20px;">Exporter CSV</button>
+    </div>
+    <div id="error" class="error hidden"></div>
+    <div id="progress"><div id="progress-bar"></div></div>
+
+    <div id="results" class="hidden">
+      <div class="stats">
+        <div class="stat"><div class="stat-val" id="stat-scanned">0</div><div class="stat-label">Ports scannés</div></div>
+        <div class="stat"><div class="stat-val" id="stat-open">0</div><div class="stat-label">Ouverts</div></div>
+        <div class="stat"><div class="stat-val" id="stat-closed">0</div><div class="stat-label">Fermés</div></div>
+      </div>
+      <table>
+        <thead><tr><th>Port</th><th>Service</th><th>État</th></tr></thead>
+        <tbody id="table-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    let lastResults = [];
+
+    async function startScan() {
+      const host = document.getElementById('host').value.trim();
+      const range = document.getElementById('range').value.trim() || '1-1024';
+      const btn = document.getElementById('btn');
+      const error = document.getElementById('error');
+      const results = document.getElementById('results');
+      const bar = document.getElementById('progress-bar');
+
+      if (!host) { showError('Entrez une IP ou un domaine'); return; }
+
+      error.classList.add('hidden');
+      results.classList.add('hidden');
+      btn.disabled = true;
+      btn.textContent = 'Scan en cours...';
+      bar.style.width = '0%';
+
+      let p = 0;
+      const interval = setInterval(() => { p = Math.min(p + 2, 90); bar.style.width = p + '%'; }, 200);
+
+      try {
+        const res = await fetch('/scan', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ host, range })
+        });
+        const data = await res.json();
+        lastResults = data.results;
+        document.getElementById('btn-export').disabled = false;
+        document.getElementById('btn-export').style.background = '#21262d';
+        clearInterval(interval);
+        bar.style.width = '100%';
+
+        if (data.error) { showError(data.error); return; }
+
+        document.getElementById('stat-scanned').textContent = data.total_scanned;
+        document.getElementById('stat-open').textContent = data.results.length;
+        document.getElementById('stat-closed').textContent = data.total_scanned - data.results.length;
+
+        const tbody = document.getElementById('table-body');
+        tbody.innerHTML = '';
+        if (data.results.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="3" style="color:#8b949e;text-align:center;padding:20px">Aucun port ouvert détecté</td></tr>';
+        } else {
+          data.results.forEach(r => {
+            tbody.innerHTML += `<tr><td class="port">${r.port}</td><td>${r.service}</td><td><span class="badge-open">Ouvert</span></td></tr>`;
+          });
+        }
+        results.classList.remove('hidden');
+      } catch (e) {
+        clearInterval(interval);
+        showError('Erreur de connexion au serveur');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Scanner';
+      }
+    }
+
+    function showError(msg) {
+      const error = document.getElementById('error');
+      error.textContent = msg;
+      error.classList.remove('hidden');
+    }
+
+    async function exportCSV() {
+  const res = await fetch('/export', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ results: lastResults })
+  });
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'scan_results.csv';
+  a.click();
+}
+  </script>
+</body>
+</html>
+
